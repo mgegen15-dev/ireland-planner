@@ -3,15 +3,25 @@
 
 const cache = new Map()
 
+// Check if value is a valid number coordinate
+function hasCoord(val) {
+  if (val === null || val === undefined || val === '' || val === 'null') return false
+  const n = Number(val)
+  return !isNaN(n) && n !== 0
+}
+
+export function itemMissingCoords(item) {
+  return !hasCoord(item.lat) || !hasCoord(item.lng)
+}
+
 export async function geocodePlace(query) {
   if (!query || query.length < 2) return null
 
-  // Normalize query for cache
   const key = query.toLowerCase().trim()
-  if (cache.has(key)) return cache.get(key)
+  // Only use cache for successful results, not failures
+  if (cache.has(key) && cache.get(key) !== null) return cache.get(key)
 
   try {
-    // Add Ireland bias if not already mentioned
     let q = query
     if (!/ireland|eire|dublin|cork|galway|belfast|ie\b/i.test(q)) {
       q = q + ', Ireland'
@@ -20,10 +30,13 @@ export async function geocodePlace(query) {
     const url = `https://nominatim.openstreetmap.org/search?format=json&limit=1&countrycodes=ie,gb&q=${encodeURIComponent(q)}`
     const res = await fetch(url, {
       headers: { 'User-Agent': 'IrelandTripPlanner/1.0' },
-      signal: AbortSignal.timeout(8000),
+      signal: AbortSignal.timeout(10000),
     })
 
-    if (!res.ok) return null
+    if (!res.ok) {
+      console.warn(`Geocode HTTP ${res.status} for: ${q}`)
+      return null
+    }
     const data = await res.json()
 
     if (data.length > 0) {
@@ -35,33 +48,44 @@ export async function geocodePlace(query) {
       cache.set(key, result)
       return result
     }
+
+    console.warn(`Geocode: no results for "${q}"`)
   } catch (e) {
-    // Non-critical
+    console.warn(`Geocode error for "${query}":`, e.message)
   }
 
-  cache.set(key, null)
+  // Don't cache failures so retries work
   return null
 }
 
-// Batch geocode: given an array of { id, name, location, lat, lng },
-// geocode any that are missing coords, return map of id -> { lat, lng }
+// Batch geocode: given an array of { id, name, location },
+// geocode each and return map of id -> { lat, lng, location }
 export async function geocodeMissing(items) {
   const updates = {}
-  const toGeocode = items.filter(i => !i.lat || !i.lng)
 
-  // Nominatim rate limit: 1 req/sec, so we process sequentially with a small delay
-  for (const item of toGeocode) {
+  for (let i = 0; i < items.length; i++) {
+    const item = items[i]
     const query = item.location || item.name || item.title || ''
     if (!query) continue
 
+    console.log(`Geocoding ${i + 1}/${items.length}: "${query}"`)
     const result = await geocodePlace(query)
+
     if (result) {
-      updates[item.id] = { lat: result.lat, lng: result.lng, location: item.location || result.displayName?.split(',').slice(0, 3).join(',').trim() }
+      // Build a short readable location from the display name
+      let shortLocation = item.location || ''
+      if (!shortLocation && result.displayName) {
+        shortLocation = result.displayName.split(',').slice(0, 3).join(',').trim()
+      }
+      updates[item.id] = { lat: result.lat, lng: result.lng, location: shortLocation }
+      console.log(`  -> Found: ${result.lat}, ${result.lng}`)
+    } else {
+      console.log(`  -> Not found`)
     }
 
-    // Small delay to respect Nominatim rate limits
-    if (toGeocode.indexOf(item) < toGeocode.length - 1) {
-      await new Promise(r => setTimeout(r, 400))
+    // Rate limit: Nominatim asks for max 1 req/sec
+    if (i < items.length - 1) {
+      await new Promise(r => setTimeout(r, 1100))
     }
   }
 

@@ -2,7 +2,7 @@ import { useMemo, useEffect, useState, useCallback, useRef } from 'react'
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import { useLocalStorage } from '../hooks/useLocalStorage'
-import { geocodeMissing } from '../hooks/useGeocode'
+import { geocodeMissing, itemMissingCoords } from '../hooks/useGeocode'
 import { defaultItinerary } from '../data/defaultItinerary'
 import { defaultGolfCourses } from '../data/golfCourses'
 import { defaultDublinItems } from '../data/dublinGuide'
@@ -59,13 +59,13 @@ export default function MapView() {
   const [geocodeCount, setGeocodeCount] = useState(0)
   const ranOnce = useRef(false)
 
-  // Collect items that have a name but no coordinates
+  // Collect items that have a name but no valid coordinates
   const collectMissing = useCallback(() => {
     const missing = []
 
     itinerary.forEach(day => {
       day.activities.forEach(act => {
-        if ((!act.lat || !act.lng) && (act.title || act.location)) {
+        if (itemMissingCoords(act) && (act.title || act.location)) {
           missing.push({
             id: act.id,
             name: act.title,
@@ -77,7 +77,7 @@ export default function MapView() {
     })
 
     golfCourses.forEach(course => {
-      if ((!course.lat || !course.lng) && (course.name || course.location)) {
+      if (itemMissingCoords(course) && (course.name || course.location)) {
         missing.push({
           id: course.id,
           name: course.name,
@@ -88,7 +88,7 @@ export default function MapView() {
     })
 
     dublinItems.forEach(item => {
-      if ((!item.lat || !item.lng) && item.name) {
+      if (itemMissingCoords(item) && item.name) {
         missing.push({
           id: item.id,
           name: item.name,
@@ -152,16 +152,16 @@ export default function MapView() {
     }
   }, [runGeocode])
 
-  // Build markers from all data sources
+  // Build markers from all data sources (only items with valid coords)
   const markers = useMemo(() => {
     const result = []
 
     itinerary.forEach(day => {
       day.activities.forEach(act => {
-        if (act.lat && act.lng) {
+        if (!itemMissingCoords(act)) {
           result.push({
             id: `itin-${act.id}`,
-            lat: act.lat, lng: act.lng,
+            lat: Number(act.lat), lng: Number(act.lng),
             title: act.title,
             sub: `${day.label}${act.time ? ' · ' + act.time : ''}`,
             type: 'itinerary',
@@ -171,10 +171,10 @@ export default function MapView() {
     })
 
     golfCourses.forEach(course => {
-      if (course.lat && course.lng) {
+      if (!itemMissingCoords(course)) {
         result.push({
           id: `golf-${course.id}`,
-          lat: course.lat, lng: course.lng,
+          lat: Number(course.lat), lng: Number(course.lng),
           title: course.name,
           sub: `${course.location || ''}${course.greenFee ? ' · ' + course.greenFee : ''}`,
           type: 'golf',
@@ -183,10 +183,10 @@ export default function MapView() {
     })
 
     dublinItems.forEach(item => {
-      if (item.lat && item.lng) {
+      if (!itemMissingCoords(item)) {
         result.push({
           id: `dub-${item.id}`,
-          lat: item.lat, lng: item.lng,
+          lat: Number(item.lat), lng: Number(item.lng),
           title: item.name,
           sub: item.category,
           type: 'dublin',
